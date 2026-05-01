@@ -1,0 +1,12 @@
+.venv/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+*.sqlite3
+agent.db
+
+ops-console/.next/
+ops-console/node_modules/
+node_modules/
+
+.DS_Store

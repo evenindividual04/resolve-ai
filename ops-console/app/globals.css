@@ -1,0 +1,66 @@
+:root {
+  --bg: #f3efe4;
+  --card: #fffdf8;
+  --ink: #1f2a30;
+  --muted: #55626a;
+  --line: #cfd6d8;
+  --danger: #9f2e2e;
+  --warn: #9a6d14;
+  --ok: #245f43;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: "IBM Plex Sans", "Avenir Next", sans-serif;
+  background: radial-gradient(circle at top right, #dfe7ff, var(--bg) 50%);
+  color: var(--ink);
+}
+main { max-width: 1100px; margin: 0 auto; padding: 24px; }
+.grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 12px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+.h6 { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.kpi { font-size: 28px; font-weight: 700; }
+.row { display: flex; justify-content: space-between; gap: 12px; margin: 8px 0; }
+.badge { border-radius: 999px; padding: 2px 10px; font-size: 12px; border: 1px solid var(--line); }
+.badge.ok { color: var(--ok); border-color: #93c6b0; }
+.badge.warn { color: var(--warn); border-color: #d9c893; }
+.badge.danger { color: var(--danger); border-color: #d9a5a5; }
+a { color: #1e4f88; }
+
+.topnav {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 20px;
+  background: rgba(255, 253, 248, 0.92);
+  border-bottom: 1px solid var(--line);
+  backdrop-filter: blur(6px);
+}
+.brand { font-weight: 700; letter-spacing: .02em; }
+.topnav-links { display: flex; gap: 12px; }
+.navlink { text-decoration: none; border: 1px solid var(--line); border-radius: 999px; padding: 6px 10px; color: var(--ink); }
+.navlink:hover { background: #f2f7ff; }
+
+input, select, button, textarea {
+  font: inherit;
+}
+input, select, textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #fff;
+}
+button {
+  border: 1px solid #7da2cd;
+  border-radius: 8px;
+  background: #e9f2ff;
+  color: #12395f;
+  padding: 7px 12px;
+  cursor: pointer;
+}
+button:disabled { opacity: .6; cursor: not-allowed; }
