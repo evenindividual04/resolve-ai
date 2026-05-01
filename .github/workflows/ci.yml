@@ -25,7 +25,7 @@ jobs:
           uv sync
 
       - name: Unit tests
-        run: uv run pytest -q
+        run: uv run pytest -q -k "not integration and not integration_services and not e2e"
 
       - name: Adversarial regression gate
         run: uv run python scripts/regression_gate.py

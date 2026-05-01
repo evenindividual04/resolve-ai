@@ -1,12 +1,18 @@
 from __future__ import annotations
 
+import asyncio
+import logging
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
 from uuid import uuid4
 
 from agents.llm_engine import LLMEngine
+from agents.negotiation_strategy import NegotiationStrategy
 from agents.policy_engine import PolicyEngine
+from agents.profile_loader import ProfileLoader
+from agents.responder import Responder
 from agents.tool_actions import ToolActionEngine
+from domain.borrower import BorrowerProfile
 from domain.channels import normalize_channel_message
 from domain.models import (
     AutonomyLevel,
@@ -22,6 +28,8 @@ from infra.db import Database
 from workflow.context_builder import ContextBuilder
 from workflow.transitions import TransitionError, apply_transition
 
+log = logging.getLogger(__name__)
+
 
 class Orchestrator:
     def __init__(self, db: Database, llm: LLMEngine, policy: PolicyEngine) -> None:
@@ -30,8 +38,12 @@ class Orchestrator:
         self.policy = policy
         self.tools = ToolActionEngine()
         self.context_builder = ContextBuilder()
+        self.profile_loader = ProfileLoader()
+        self.negotiation = NegotiationStrategy()
+        self.responder = Responder(llm)
 
     async def process_event(self, event: Event) -> dict:
+        # Idempotency gate
         inserted = await self.db.insert_event(event.model_dump())
         if not inserted:
             return {"status": "duplicate", "event_id": event.event_id}
@@ -39,11 +51,33 @@ class Orchestrator:
         state = await self._load_or_init_state(event)
         prev_state = state.current_state
 
+        # Load borrower profile (deterministic from user_id for replay consistency)
+        profile = self.profile_loader.load(state.user_id, state.outstanding_amount)
+
+        # DNC / legal hard gate — before any LLM call
+        if profile.dnc_flag:
+            state.current_state = WorkflowStatus.HALTED
+            await self.db.upsert_workflow(self._state_row(state))
+            await self._record_failure(
+                workflow_id=state.workflow_id,
+                event_id=event.event_id,
+                failure_type=FailureType.DNC_VIOLATION,
+                severity="high",
+                recoverability="low",
+                recovery_strategy="escalate",
+                recovered=False,
+                notes="dnc_flag_active",
+            )
+            return {"status": "halted", "reason": "dnc_enforced", "workflow_id": state.workflow_id}
+
+        # Clear per-event LLM cache
+        self.llm.clear_cache()
+
         if self._is_stale(state, event):
             state.current_state = WorkflowStatus.REVALIDATION_REQUIRED
 
-        decision, critic_result, consistency_variance = self._evaluate_decision(event, state)
-        policy_result = self._policy_for_event(event, state, decision)
+        decision, critic_result, consistency_variance, is_llm_call = await self._evaluate_decision(event, state)
+        policy_result = self._policy_for_event(event, state, decision, profile)
         autonomy_level = self._autonomy_level(decision.confidence, critic_result, consistency_variance)
 
         if autonomy_level != AutonomyLevel.FULL_AUTO:
@@ -51,9 +85,33 @@ class Orchestrator:
             policy_result.allowed = False
             policy_result.reason_code = "autonomy_guardrail"
 
+        # Update negotiation tracking
+        if decision.intent == "PAYMENT_OFFER" and decision.amount is not None:
+            state.prior_offers = list(state.prior_offers) + [decision.amount]
+
         if decision.intent == "PAYMENT_OFFER" and policy_result.allowed:
             state.negotiated_amount = decision.amount
             state.agreement_expires_at = event.occurred_at + timedelta(hours=48)
+
+        # Compute counter-offer amount for use by responder
+        if policy_result.next_action == "counter_offer":
+            state.counter_offer_amount = self.negotiation.compute_counter_offer(
+                state.outstanding_amount,
+                profile,
+                state.turn_count,
+                state.prior_offers,
+            )
+
+        # Increment turn count on negotiation-advancing events
+        if event.event_type == EventType.USER_MESSAGE:
+            state.turn_count += 1
+
+        # Increment strike count on adverse signals
+        if decision.intent in {"ABUSIVE", "CONFUSED"} or (
+            event.event_type == EventType.PAYMENT_WEBHOOK
+            and event.payload.get("status") != "paid"
+        ):
+            state.strike_count += 1
 
         state.last_message = str(event.payload.get("message", ""))
         state.history_summary = self._update_summary(state.history_summary, state.last_message)
@@ -96,6 +154,16 @@ class Orchestrator:
 
         side_effects, tool_compensation_applied = await self._tool_side_effects(state, decision.intent)
 
+        # Generate and store outbound message
+        outbound_message = None
+        if event.event_type in {EventType.USER_MESSAGE, EventType.SCHEDULER_TIMEOUT}:
+            msg_log, guard_result = await self.responder.generate(policy_result.next_action, state, profile)
+            try:
+                await self.db.insert_message_log(msg_log.to_dict())
+            except Exception:  # noqa: BLE001
+                log.warning("message_log_insert_failed workflow_id=%s", state.workflow_id)
+            outbound_message = {"content": msg_log.content, "channel": msg_log.channel, "compliance_passed": guard_result.passed}
+
         trace = self._decision_trace(
             event,
             state,
@@ -105,6 +173,7 @@ class Orchestrator:
             critic_result=critic_result,
             consistency_variance=consistency_variance,
             tool_compensation_applied=tool_compensation_applied,
+            is_llm_call=is_llm_call,
         )
         await self.db.insert_trace(trace.model_dump())
         await self.db.upsert_workflow(self._state_row(state))
@@ -117,9 +186,16 @@ class Orchestrator:
             "reason_code": policy_result.reason_code,
             "cost_usd": trace.cost_usd,
             "tokens_used": trace.tokens_used,
+            "is_llm_call": is_llm_call,
             "side_effects": side_effects,
             "autonomy_level": autonomy_level,
             "consistency_variance": consistency_variance,
+            "turn_count": state.turn_count,
+            "strike_count": state.strike_count,
+            "counter_offer_amount": state.counter_offer_amount,
+            "outbound_message": outbound_message,
+            "borrower_segment": profile.loan_segment.value,
+            "borrower_risk_band": profile.risk_band.value,
         }
 
     async def replay(self, workflow_id: str) -> dict:
@@ -152,7 +228,10 @@ class Orchestrator:
                 current_state=row["state"],
                 outstanding_amount=row["outstanding_amount"],
                 negotiated_amount=row["negotiated_amount"],
+                counter_offer_amount=row.get("counter_offer_amount"),
                 strike_count=row["strike_count"],
+                turn_count=row.get("turn_count", 0),
+                prior_offers=row.get("prior_offers") or [],
                 last_message=row["last_message"],
                 history_summary=row["history_summary"],
                 version=row["version"],
@@ -173,27 +252,42 @@ class Orchestrator:
             current_state=WorkflowStatus.INIT,
         )
 
-    def _evaluate_decision(self, event: Event, state: WorkflowState):
-        if event.event_type == EventType.PAYMENT_WEBHOOK:
-            decision = self.llm.extract_intent("payment done", state.negotiated_amount)
-            return decision, {"flags_issue": False}, 0.0
+    async def _evaluate_decision(self, event: Event, state: WorkflowState) -> tuple:
+        if event.event_type in {EventType.PAYMENT_WEBHOOK}:
+            decision, _ = await self.llm.extract_intent("payment done", state.negotiated_amount)
+            return decision, {"flags_issue": False}, 0.0, False
+
+        if event.event_type in {EventType.SCHEDULER_TIMEOUT}:
+            decision, _ = await self.llm.extract_intent("timeout reminder", state.negotiated_amount)
+            return decision, {"flags_issue": False}, 0.0, False
 
         normalized = normalize_channel_message(event.channel, event.payload)
-        _ctx = self.context_builder.build(state, event)
-        primary = self.llm.extract_intent(normalized.text, state.negotiated_amount)
+        self.context_builder.build(state, event)
 
-        # Self-critique loop (bounded)
+        # Run primary extraction and 2 consistency samples concurrently.
+        # This replaces the previous sequential 4-call pattern.
+        results = await self.llm.extract_intent_multi(
+            normalized.text,
+            state.negotiated_amount,
+            n=3,
+        )
+        primary_result, d1_result, d2_result = results
+        primary, is_real_1 = primary_result
+        d1, is_real_3 = d1_result
+        d2, is_real_4 = d2_result
+        is_real_any = is_real_1 or is_real_3 or is_real_4
+
+        # Self-critique: if primary is uncertain, refine with explicit clarify prompt
         flags_issue = primary.intent in {"UNKNOWN", "CONFUSED"} or primary.confidence < 0.6
         refined = primary
         if flags_issue:
-            refined = self.llm.extract_intent(f"clarify: {normalized.text}", state.negotiated_amount)
+            refined, is_real_2 = await self.llm.extract_intent(
+                f"clarify: {normalized.text}", state.negotiated_amount
+            )
+            is_real_any = is_real_any or is_real_2
 
-        # Multi-run consistency (bounded to 3)
-        intents = [
-            refined.intent,
-            self.llm.extract_intent(normalized.text, state.negotiated_amount).intent,
-            self.llm.extract_intent(normalized.text, state.negotiated_amount).intent,
-        ]
+        # Consistency check across 3 samples
+        intents = [refined.intent, d1.intent, d2.intent]
         dominant = max(set(intents), key=intents.count)
         variance = 1.0 - (intents.count(dominant) / len(intents))
 
@@ -202,15 +296,31 @@ class Orchestrator:
             refined.confidence = min(refined.confidence, 0.5)
 
         critic_result = {"flags_issue": flags_issue, "intents": intents, "dominant": dominant}
-        return refined, critic_result, variance
+        return refined, critic_result, variance, is_real_any
 
-    def _policy_for_event(self, event: Event, state: WorkflowState, decision):
+    def _policy_for_event(self, event: Event, state: WorkflowState, decision, profile: BorrowerProfile | None = None):
         if event.event_type == EventType.PAYMENT_WEBHOOK:
             action = "resolve" if event.payload.get("status") == "paid" else "payment_failed"
-            policy_result = self.policy.evaluate(decision=decision, outstanding_amount=state.outstanding_amount, now=event.occurred_at)
+            policy_result = self.policy.evaluate(
+                decision=decision,
+                outstanding_amount=state.outstanding_amount,
+                now=event.occurred_at,
+                profile=profile,
+                strike_count=state.strike_count,
+                turn_count=state.turn_count,
+                prior_offers=state.prior_offers,
+            )
             policy_result.next_action = action
             return policy_result
-        return self.policy.evaluate(decision=decision, outstanding_amount=state.outstanding_amount, now=event.occurred_at)
+        return self.policy.evaluate(
+            decision=decision,
+            outstanding_amount=state.outstanding_amount,
+            now=event.occurred_at,
+            profile=profile,
+            strike_count=state.strike_count,
+            turn_count=state.turn_count,
+            prior_offers=state.prior_offers,
+        )
 
     @staticmethod
     def _autonomy_level(confidence: float, critic_result: dict, consistency_variance: float) -> AutonomyLevel:
@@ -231,11 +341,19 @@ class Orchestrator:
             exp = state.agreement_expires_at if state.agreement_expires_at.tzinfo else state.agreement_expires_at.replace(tzinfo=UTC)
             if e > exp:
                 return True
+        # Negative age means out-of-order delivery (e.g. delayed webhook).
+        # Log the anomaly but do not silently pass — treat as non-stale
+        # so the event is still processed correctly.
         if age_hours < 0:
+            log.warning(
+                "out_of_order_event workflow_id=%s age_hours=%.2f event_id=unknown",
+                state.workflow_id,
+                age_hours,
+            )
             return False
         return age_hours > state.stale_after_hours
 
-    def _decision_trace(self, event: Event, state: WorkflowState, llm_output: dict, policy_result: dict, *, autonomy_level: AutonomyLevel, critic_result: dict, consistency_variance: float, tool_compensation_applied: bool) -> DecisionTrace:
+    def _decision_trace(self, event: Event, state: WorkflowState, llm_output: dict, policy_result: dict, *, autonomy_level: AutonomyLevel, critic_result: dict, consistency_variance: float, tool_compensation_applied: bool, is_llm_call: bool) -> DecisionTrace:
         high_risk = policy_result["next_action"] in {"escalate", "counter_offer"}
         tokens, cost = self.llm.estimate_cost(str(event.payload), high_risk=high_risk)
         decision_id = str(uuid4())
@@ -259,6 +377,7 @@ class Orchestrator:
             tokens_used=tokens,
             cost_usd=cost,
             checksum=checksum,
+            is_llm_call=is_llm_call,
             autonomy_level=autonomy_level,
             critic_result=critic_result,
             consistency_variance=consistency_variance,
@@ -317,7 +436,7 @@ class Orchestrator:
             escalation_id=str(uuid4()),
             workflow_id=state.workflow_id,
             reason=reason,
-            priority=1 if "abuse" in reason else 2,
+            priority=1 if "abuse" in reason or "dnc" in reason else 2,
             sla_due_at=datetime.now(UTC) + timedelta(hours=4),
             notes=f"auto-generated from {state.current_state}",
         )
@@ -352,8 +471,9 @@ class Orchestrator:
                 outstanding_amount=float(event.payload.get("outstanding_amount", 0.0)),
                 current_state=WorkflowStatus.INIT,
             )
-            decision, critic_result, variance = self._evaluate_decision(event, state)
-            policy_result = self._policy_for_event(event, state, decision)
+            profile = self.profile_loader.load(state.user_id, state.outstanding_amount)
+            decision, critic_result, variance, _ = await self._evaluate_decision(event, state)
+            policy_result = self._policy_for_event(event, state, decision, profile)
             autonomy = self._autonomy_level(decision.confidence, critic_result, variance)
             if autonomy != AutonomyLevel.FULL_AUTO:
                 policy_result.next_action = "escalate"
@@ -378,8 +498,19 @@ class Orchestrator:
 
     @staticmethod
     def _update_summary(summary: str, new_msg: str) -> str:
-        compact = (summary + " | " + new_msg).strip(" |")
-        return compact[-500:]
+        """Semantic context compressor.
+
+        Preserves the first 100 chars (initial hardship claim, first offer)
+        and the last 350 chars (most recent context). The original rolling
+        tail-only truncation lost the earliest context which caused the LLM
+        to contradict earlier decisions it could no longer see.
+        """
+        combined = (summary + " | " + new_msg).strip(" |")
+        if len(combined) <= 450:
+            return combined
+        head = combined[:100]
+        tail = combined[-350:]
+        return f"{head} [...] {tail}"
 
     @staticmethod
     def _state_row(state: WorkflowState) -> dict:

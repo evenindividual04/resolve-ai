@@ -17,6 +17,7 @@ class WorkflowStatus(str, Enum):
     REVALIDATION_REQUIRED = "revalidation_required"
     RESOLVED = "resolved"
     ESCALATED = "escalated"
+    HALTED = "halted"  # DNC or legal flag — all contacts must cease
 
 
 class FailureType(str, Enum):
@@ -26,6 +27,7 @@ class FailureType(str, Enum):
     USER_AMBIGUITY = "user_ambiguity"
     INFRA_TIMEOUT_OUTAGE = "infra_timeout_outage"
     INFRA_FAILURE = "infra_failure"
+    DNC_VIOLATION = "dnc_violation"  # Contact attempted despite DNC flag
 
 
 class AutonomyLevel(str, Enum):
@@ -45,6 +47,8 @@ class EventType(str, Enum):
     USER_MESSAGE = "user_message"
     PAYMENT_WEBHOOK = "payment_webhook"
     TIMEOUT = "timeout"
+    SCHEDULER_TIMEOUT = "scheduler_timeout"  # Emitted by WorkflowScheduler for expired agreements
+    CHANNEL_SWITCH = "channel_switch"       # Emitted when ChannelRouter switches contact channel
 
 
 class Event(BaseModel):
@@ -68,7 +72,10 @@ class WorkflowState(BaseModel):
     current_state: WorkflowStatus = WorkflowStatus.INIT
     outstanding_amount: float = 0.0
     negotiated_amount: float | None = None
+    counter_offer_amount: float | None = None  # Computed by NegotiationStrategy
     strike_count: int = 0
+    turn_count: int = 0                        # Negotiation turns taken so far
+    prior_offers: list[float] = Field(default_factory=list)  # Borrower offer history
     last_message: str = ""
     history_summary: str = ""
     version: int = 0
@@ -122,7 +129,8 @@ class DecisionTrace(BaseModel):
     cost_usd: float
     tokens_used: int
     checksum: str
-    autonomy_level: AutonomyLevel = AutonomyLevel.HUMAN_REVIEW
+    is_llm_call: bool = True
+    autonomy_level: AutonomyLevel = AutonomyLevel.FULL_AUTO
     critic_result: dict[str, Any] = Field(default_factory=dict)
     consistency_variance: float = 0.0
     failure_score: dict[str, Any] = Field(default_factory=dict)

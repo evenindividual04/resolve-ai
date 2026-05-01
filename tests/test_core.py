@@ -67,7 +67,13 @@ async def test_abuse_escalates() -> None:
     assert result["to"] == WorkflowStatus.ESCALATED
 
 
-def test_transition_rejects_illegal() -> None:
+@pytest.mark.asyncio
+async def test_transition_rejects_illegal() -> None:
+    from domain.models import LLMDecision
     state = WorkflowState(workflow_id="w", user_id="u", current_state=WorkflowStatus.RESOLVED)
+    # Use a pre-built decision to avoid calling async extract_intent in a sync test
+    decision = LLMDecision(intent="PAYMENT_OFFER", amount=100.0, confidence=0.9)
+    policy_result = PolicyEngine().evaluate(decision=decision, outstanding_amount=1000, now=datetime.now(UTC))
     with pytest.raises(TransitionError):
-        apply_transition(state, PolicyEngine().evaluate(decision=LLMEngine().extract_intent("I can pay 100", None), outstanding_amount=1000, now=datetime.now(UTC)))
+        apply_transition(state, policy_result)
+

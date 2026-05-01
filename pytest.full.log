@@ -1,0 +1,55 @@
+............ss..F.....................                                   [100%]
+=================================== FAILURES ===================================
+____________________ test_learning_cycle_uses_active_python ____________________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x111d67fb0>
+tmp_path = PosixPath('/private/var/folders/tj/xprbm7716_j989bly5dr39xc0000gn/T/pytest-of-anmolsen/pytest-129/test_learning_cycle_uses_activ0')
+
+    def test_learning_cycle_uses_active_python(monkeypatch, tmp_path: Path) -> None:
+        captured: dict[str, object] = {}
+    
+        class _Result:
+            stdout = json.dumps({"output": "artifacts/retraining/x", "train_records": 1, "eval_records": 0})
+    
+        def fake_run(cmd, capture_output, text, check):
+            captured["cmd"] = cmd
+            captured["capture_output"] = capture_output
+            captured["text"] = text
+            captured["check"] = check
+            return _Result()
+    
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(run_learning_cycle.subprocess, "run", fake_run)
+    
+>       report = run_learning_cycle.run()
+                 ^^^^^^^^^^^^^^^^^^^^^^^^
+
+/Users/anmolsen/Developer/resolve-ai/tests/test_learning_loop.py:50: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/Users/anmolsen/Developer/resolve-ai/scripts/run_learning_cycle.py:13: in run
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.12/pathlib.py:1027: in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = PosixPath('artifacts/retraining/latest/summary.json'), mode = 'r'
+buffering = -1, encoding = 'utf-8', errors = None, newline = None
+
+    def open(self, mode='r', buffering=-1, encoding=None,
+             errors=None, newline=None):
+        """
+        Open the file pointed to by this path and return a file object, as
+        the built-in open() function does.
+        """
+        if "b" not in mode:
+            encoding = io.text_encoding(encoding)
+>       return io.open(self, mode, buffering, encoding, errors, newline)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       FileNotFoundError: [Errno 2] No such file or directory: 'artifacts/retraining/latest/summary.json'
+
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.12/pathlib.py:1013: FileNotFoundError
+=========================== short test summary info ============================
+FAILED tests/test_learning_loop.py::test_learning_cycle_uses_active_python - ...
+1 failed, 35 passed, 2 skipped in 0.93s

@@ -32,8 +32,11 @@ class TemporalOrchestrationAdapter(OrchestrationAdapter):
     implementation can be dropped in without changing API handlers.
     """
 
+    def __init__(self) -> None:
+        raise RuntimeError("Temporal orchestration is not production-ready in this build. Use ORCHESTRATION_ENGINE=custom.")
+
     async def process_event(self, event: Event) -> dict:
-        raise NotImplementedError("Temporal adapter not wired yet. Set ORCHESTRATION_ENGINE=custom.")
+        raise RuntimeError("Temporal orchestration is not production-ready in this build. Use ORCHESTRATION_ENGINE=custom.")
 
     async def replay(self, workflow_id: str) -> dict:
-        raise NotImplementedError("Temporal adapter not wired yet. Set ORCHESTRATION_ENGINE=custom.")
+        raise RuntimeError("Temporal orchestration is not production-ready in this build. Use ORCHESTRATION_ENGINE=custom.")

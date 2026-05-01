@@ -11,17 +11,21 @@ from infra.queue import RedisEventQueue, StreamConfig
 class FakeRedis:
     def __init__(self) -> None:
         self.store = []
+        self.stream_store: dict[str, list[tuple[str, dict]]] = {}
 
     async def xgroup_create(self, **kwargs):
         return True
 
     async def xadd(self, stream, fields):
-        msg_id = f"{len(self.store)+1}-0"
-        self.store.append((msg_id, fields))
+        bucket = self.stream_store.setdefault(stream, [])
+        msg_id = f"{len(bucket)+1}-0"
+        bucket.append((msg_id, fields))
+        self.store = bucket
         return msg_id
 
     async def xreadgroup(self, **kwargs):
-        return [(kwargs["streams"].keys().__iter__().__next__(), self.store)]
+        stream = kwargs["streams"].keys().__iter__().__next__()
+        return [(stream, self.stream_store.get(stream, []))]
 
     async def xack(self, stream, group, msg_id):
         return 1
@@ -47,6 +51,7 @@ async def test_queue_publish_read_ack() -> None:
     batch = await q.read_batch()
     assert len(batch) == 1
     assert batch[0][1].event_id == "q1"
+    assert batch[0][2] == 0
 
     acked = await q.ack(batch[0][0])
     assert acked == 1

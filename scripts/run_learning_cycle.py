@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+import sys
 
 
 def run() -> dict:
-    proc = subprocess.run(["python", "scripts/build_retraining_dataset.py"], capture_output=True, text=True, check=True)
+    proc = subprocess.run([sys.executable, "scripts/build_retraining_dataset.py"], capture_output=True, text=True, check=True)
     result = json.loads(proc.stdout.strip())
     summary_path = Path("artifacts/retraining/latest/summary.json")
     summary = json.loads(summary_path.read_text(encoding="utf-8"))

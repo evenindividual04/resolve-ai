@@ -15,12 +15,14 @@ from domain.models import EscalationAction, Event, FailureRecord, FeedbackSignal
 from infra.db import Database
 from infra.observability import WORKFLOW_EVENTS, configure_logging, maybe_init_otel, metrics_response, tracing_middleware
 from infra.queue import RedisEventQueue
+from infra.scheduler import WorkflowScheduler
 from infra.settings import settings
 from workflow.factory import build_orchestration_adapter
 
 db = Database(settings.database_url)
 adapter = build_orchestration_adapter(db)
 queue = RedisEventQueue(settings.redis_url)
+scheduler = WorkflowScheduler(db, queue)
 
 
 @asynccontextmanager
@@ -30,10 +32,13 @@ async def lifespan(_: FastAPI):
     await db.init()
     if settings.use_queue_ingest:
         await queue.ensure_group()
+    scheduler_task = await scheduler.start()
     yield
+    scheduler.stop()
+    scheduler_task.cancel()
 
 
-app = FastAPI(title="Durable Negotiation Agent", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Autonomous Collections Intelligence Platform", version="0.2.0", lifespan=lifespan)
 app.middleware("http")(tracing_middleware)
 log = logging.getLogger(__name__)
 
@@ -76,7 +81,7 @@ async def get_workflow(workflow_id: str):
 @app.get("/economics/summary")
 async def economics_summary():
     async with db.engine.connect() as conn:
-        rs = await conn.execute(text("SELECT cost_usd, tokens_used, workflow_id, model_name, final_action FROM decision_traces"))
+        rs = await conn.execute(text("SELECT cost_usd, tokens_used, workflow_id, model_name, final_action, is_llm_call FROM decision_traces"))
         trace_rows = [dict(r._mapping) for r in rs.fetchall()]
     total_cost = round(sum(float(r["cost_usd"]) for r in trace_rows), 6)
     total_tokens = sum(int(r["tokens_used"]) for r in trace_rows)
@@ -88,8 +93,13 @@ async def economics_summary():
     total_failure_cost = sum(float(f["cost_impact_usd"]) for f in failures)
     cost_per_failure = round(total_failure_cost / max(1, len(failures)), 6)
     model_breakdown: dict[str, float] = {}
+    llm_call_breakdown: dict[str, int] = {"real": 0, "fallback": 0}
     for r in trace_rows:
         model_breakdown[r["model_name"]] = round(model_breakdown.get(r["model_name"], 0.0) + float(r["cost_usd"]), 6)
+        if r.get("is_llm_call", 1):
+            llm_call_breakdown["real"] += 1
+        else:
+            llm_call_breakdown["fallback"] += 1
     return {
         "total_cost_usd": total_cost,
         "total_tokens": total_tokens,
@@ -98,6 +108,7 @@ async def economics_summary():
         "cost_per_resolution": cost_per_resolution,
         "cost_per_failure": cost_per_failure,
         "model_breakdown": model_breakdown,
+        "llm_call_breakdown": llm_call_breakdown,
     }
 
 
@@ -322,3 +333,88 @@ async def ops_panel() -> str:
 @app.get("/metrics")
 async def metrics():
     return metrics_response()
+
+
+@app.get("/metrics/business")
+async def business_metrics():
+    """Business-level KPIs for the collections platform.
+
+    Unlike /metrics (infrastructure), this surfaces what actually matters:
+    resolution rate, escalation rate, average turns to close, cost per
+    resolved workflow, and compliance violations.
+    """
+    return await db.get_business_metrics()
+
+
+@app.get("/workflows/{workflow_id}/messages")
+async def workflow_messages(workflow_id: str):
+    """Return all outbound messages generated for a workflow, with compliance status."""
+    row = await db.get_workflow(workflow_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="workflow not found")
+    messages = await db.list_message_logs(workflow_id)
+    return {"workflow_id": workflow_id, "messages": messages}
+
+
+@app.get("/workflows/{workflow_id}/negotiation")
+async def workflow_negotiation(workflow_id: str):
+    """Return the current negotiation state: turn count, prior offers, counter-offer amount."""
+    row = await db.get_workflow(workflow_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="workflow not found")
+    return {
+        "workflow_id": workflow_id,
+        "turn_count": row.get("turn_count", 0),
+        "prior_offers": row.get("prior_offers") or [],
+        "counter_offer_amount": row.get("counter_offer_amount"),
+        "negotiated_amount": row.get("negotiated_amount"),
+        "outstanding_amount": row.get("outstanding_amount"),
+        "strike_count": row.get("strike_count", 0),
+    }
+
+
+@app.get("/workflows")
+async def list_workflows(
+    state: str | None = None,
+    loan_segment: str | None = None,
+    risk_band: str | None = None,
+    limit: int = 200,
+    offset: int = 0,
+):
+    """Paginated list of workflow summaries for the ops console workflow browser."""
+    rows = await db.list_workflows(
+        state=state,
+        loan_segment=loan_segment,
+        risk_band=risk_band,
+        limit=limit,
+        offset=offset,
+    )
+    return rows
+
+
+@app.get("/borrowers")
+async def list_borrowers(
+    dnc_only: bool = False,
+    risk_band: str | None = None,
+    loan_segment: str | None = None,
+    limit: int = 200,
+    offset: int = 0,
+):
+    """Paginated list of borrower profiles for the ops console borrower intelligence page."""
+    rows = await db.list_borrower_profiles(
+        dnc_only=dnc_only,
+        risk_band=risk_band,
+        loan_segment=loan_segment,
+        limit=limit,
+        offset=offset,
+    )
+    return rows
+
+
+@app.get("/borrowers/{user_id}")
+async def get_borrower(user_id: str):
+    """Return the borrower profile for a specific user_id."""
+    row = await db.get_borrower_profile(user_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="borrower profile not found")
+    return row

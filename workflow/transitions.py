@@ -11,7 +11,14 @@ def apply_transition(state: WorkflowState, policy: PolicyResult) -> WorkflowStat
     src = state.current_state
     action = policy.next_action
 
-    if action == "escalate":
+    # HALTED is a terminal compliance state (DNC / legal flag).
+    # Once halted, no further transitions are permitted.
+    if src == WorkflowStatus.HALTED:
+        return state
+
+    if action == "halt":
+        state.current_state = WorkflowStatus.HALTED
+    elif action == "escalate":
         state.current_state = WorkflowStatus.ESCALATED
     elif src == WorkflowStatus.INIT:
         state.current_state = WorkflowStatus.CONTACTED
