@@ -6,40 +6,26 @@ export const ArchitectureScene: React.FC = () => {
   const { fps } = useVideoConfig();
 
   const headerOpacity = interpolate(frame, [0, 20], [0, 1]);
-  const boxDelay = 15;
+  const slideUp = spring({ frame: frame - 10, fps, from: 40, to: 0, durationInFrames: 30 });
 
-  const box1Scale = spring({
-    frame: frame - boxDelay,
-    fps,
-    from: 0,
-    to: 1,
-    durationInFrames: 30,
-  });
-  const box2Scale = spring({
-    frame: frame - boxDelay - 15,
-    fps,
-    from: 0,
-    to: 1,
-    durationInFrames: 30,
-  });
-  const box3Scale = spring({
-    frame: frame - boxDelay - 30,
-    fps,
-    from: 0,
-    to: 1,
-    durationInFrames: 30,
-  });
+  const nodes = [
+    { title: "Twilio Webhook", sub: "Omnichannel Ingress", color: "#3b82f6" },
+    { title: "FastAPI Engine", sub: "Async Event Processing", color: "#10b981" },
+    { title: "Groq Llama-3", sub: "Sub-second Inference", color: "#f59e0b" },
+    { title: "PostgreSQL", sub: "Immutable Audit Ledger", color: "#8b5cf6" },
+  ];
 
   return (
     <div
       style={{
         flex: 1,
-        backgroundColor: "#111827",
+        backgroundColor: "#0B1121",
         justifyContent: "center",
         alignItems: "center",
         display: "flex",
         flexDirection: "column",
         padding: 100,
+        fontFamily: 'system-ui, -apple-system, sans-serif'
       }}
     >
       <h1
@@ -49,68 +35,60 @@ export const ArchitectureScene: React.FC = () => {
           fontWeight: 700,
           margin: 0,
           opacity: headerOpacity,
-          marginBottom: 60,
+          transform: `translateY(${slideUp}px)`,
+          textAlign: "center"
         }}
       >
-        Architecture
+        Built for <span style={{ color: '#10b981' }}>Scale</span>
       </h1>
-      <div
-        style={{
-          display: "flex",
-          gap: 40,
-          alignItems: "center",
-        }}
-      >
-        <div
-          style={{
-            backgroundColor: "#1e40af",
-            padding: 30,
-            borderRadius: 12,
-            transform: `scale(${box1Scale})`,
-            minWidth: 280,
-          }}
-        >
-          <h3 style={{ color: "#fff", margin: 0, fontSize: 24, marginBottom: 10 }}>
-            API Layer
-          </h3>
-          <p style={{ color: "#bfdbfe", margin: 0, fontSize: 18 }}>
-            FastAPI for event ingestion and workflow queries
-          </p>
-        </div>
-        <div style={{ color: "#60a5fa", fontSize: 48 }}>→</div>
-        <div
-          style={{
-            backgroundColor: "#047857",
-            padding: 30,
-            borderRadius: 12,
-            transform: `scale(${box2Scale})`,
-            minWidth: 280,
-          }}
-        >
-          <h3 style={{ color: "#fff", margin: 0, fontSize: 24, marginBottom: 10 }}>
-            Workflow Core
-          </h3>
-          <p style={{ color: "#bbf7d0", margin: 0, fontSize: 18 }}>
-            Deterministic orchestration with strict state transitions
-          </p>
-        </div>
-        <div style={{ color: "#60a5fa", fontSize: 48 }}>→</div>
-        <div
-          style={{
-            backgroundColor: "#92400e",
-            padding: 30,
-            borderRadius: 12,
-            transform: `scale(${box3Scale})`,
-            minWidth: 280,
-          }}
-        >
-          <h3 style={{ color: "#fff", margin: 0, fontSize: 24, marginBottom: 10 }}>
-            Operator Console
-          </h3>
-          <p style={{ color: "#fcd3ae", margin: 0, fontSize: 18 }}>
-            Next.js console for triage and review
-          </p>
-        </div>
+      <h2 style={{
+        color: "#9ca3af",
+        fontSize: 32,
+        fontWeight: 400,
+        marginTop: 16,
+        opacity: headerOpacity,
+        textAlign: "center"
+      }}>
+        High-throughput asynchronous architecture.
+      </h2>
+
+      <div style={{
+        marginTop: 80,
+        display: 'flex',
+        gap: 20,
+        alignItems: 'center'
+      }}>
+        {nodes.map((n, i) => {
+          const pop = spring({ frame: frame - 30 - (i * 15), fps, from: 0, to: 1, durationInFrames: 25 });
+          return (
+            <React.Fragment key={i}>
+              <div style={{
+                background: 'rgba(31, 41, 55, 0.4)',
+                border: `1px solid ${n.color}`,
+                borderRadius: 24,
+                padding: "32px 40px",
+                minWidth: 280,
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: 12,
+                transform: `scale(${pop})`,
+                opacity: pop,
+                boxShadow: `0 20px 40px rgba(0,0,0,0.3)`
+              }}>
+                <div style={{ color: '#fff', fontSize: 28, fontWeight: 700, textAlign: 'center' }}>
+                  {n.title}
+                </div>
+                <div style={{ color: '#9ca3af', fontSize: 18, textAlign: 'center' }}>
+                  {n.sub}
+                </div>
+              </div>
+              {i < nodes.length - 1 && (
+                <div style={{ fontSize: 40, color: '#4b5563', opacity: pop }}>→</div>
+              )}
+            </React.Fragment>
+          );
+        })}
       </div>
     </div>
   );

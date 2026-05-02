@@ -6,51 +6,54 @@ export const OutroScene: React.FC = () => {
 
   const titleOpacity = interpolate(frame, [0, 30], [0, 1]);
   const subtitleOpacity = interpolate(frame, [20, 50], [0, 1]);
-  const urlOpacity = interpolate(frame, [40, 70], [0, 1]);
+  const glowOpacity = interpolate(frame, [30, 60], [0, 0.5]);
 
   return (
     <div
       style={{
         flex: 1,
-        backgroundColor: "#0a0a0a",
+        backgroundColor: "#0B1121",
         justifyContent: "center",
         alignItems: "center",
         display: "flex",
         flexDirection: "column",
         padding: 100,
+        fontFamily: 'system-ui, -apple-system, sans-serif'
       }}
     >
+      <div style={{
+        position: 'absolute',
+        width: 800,
+        height: 800,
+        background: 'radial-gradient(circle, rgba(16,185,129,0.3) 0%, rgba(11,17,33,0) 70%)',
+        opacity: glowOpacity,
+      }} />
+
       <h1
         style={{
           color: "#ffffff",
-          fontSize: 80,
+          fontSize: 100,
           fontWeight: 800,
           margin: 0,
           opacity: titleOpacity,
+          letterSpacing: "-0.04em",
+          zIndex: 10
         }}
       >
         Resolve AI
       </h1>
       <p
         style={{
-          color: "#60a5fa",
-          fontSize: 32,
+          color: "#10b981",
+          fontSize: 40,
           fontWeight: 400,
-          marginTop: 20,
+          marginTop: 24,
           opacity: subtitleOpacity,
+          zIndex: 10,
+          letterSpacing: "-0.01em"
         }}
       >
-        Operate AI Workflows with Confidence
-      </p>
-      <p
-        style={{
-          color: "#9ca3af",
-          fontSize: 24,
-          marginTop: 40,
-          opacity: urlOpacity,
-        }}
-      >
-        github.com/resolve-ai
+        The AI-Native Bank starts here.
       </p>
     </div>
   );

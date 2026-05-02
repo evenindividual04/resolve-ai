@@ -1,6 +1,10 @@
 # Resolve AI
 Resolve AI is an infra-first, production-grade AI workflow platform for high-stakes negotiation operations.
 
+<p align="center">
+  <video src="./video/out.mp4" controls width="100%" style="border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);"></video>
+</p>
+
 It is built for teams that need AI to act as a decision signal, not a free-form control plane. Every step is deterministic where it must be, traceable where it matters, and resilient when systems or models fail.
 
 ## Why It Exists
