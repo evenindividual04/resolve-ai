@@ -5,9 +5,11 @@ from datetime import UTC, datetime
 import logging
 import json
 import asyncio
+import os
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from sqlalchemy import text
 
@@ -19,7 +21,19 @@ from infra.scheduler import WorkflowScheduler
 from infra.settings import settings
 from workflow.factory import build_orchestration_adapter
 
-db = Database(settings.database_url)
+
+def _normalize_db_url(url: str) -> str:
+    """Render provides postgresql:// but asyncpg requires postgresql+asyncpg://."""
+    if url.startswith("postgres://") or url.startswith("postgresql://"):
+        if "+" not in url.split("://")[0]:
+            return url.replace("postgresql://", "postgresql+asyncpg://", 1).replace(
+                "postgres://", "postgresql+asyncpg://", 1
+            )
+    return url
+
+
+_db_url = _normalize_db_url(os.environ.get("DATABASE_URL", settings.database_url))
+db = Database(_db_url)
 adapter = build_orchestration_adapter(db)
 queue = RedisEventQueue(settings.redis_url)
 scheduler = WorkflowScheduler(db, queue)
@@ -39,6 +53,20 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Autonomous Collections Intelligence Platform", version="0.2.0", lifespan=lifespan)
+
+# CORS — allow the Vercel ops-console and local dev to call this API from the browser
+_allowed_origins = os.environ.get(
+    "CORS_ORIGINS",
+    "https://*.vercel.app,http://localhost:3000,http://localhost:3001",
+).split(",")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in _allowed_origins],
+    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 app.middleware("http")(tracing_middleware)
 log = logging.getLogger(__name__)
 
@@ -370,6 +398,9 @@ async def workflow_negotiation(workflow_id: str):
         "negotiated_amount": row.get("negotiated_amount"),
         "outstanding_amount": row.get("outstanding_amount"),
         "strike_count": row.get("strike_count", 0),
+        "emotional_state": row.get("emotional_state", "neutral"),
+        "behavior_pattern": row.get("behavior_pattern", "compliant"),
+        "active_strategy": row.get("active_strategy", "pragmatic"),
     }
 
 
