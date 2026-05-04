@@ -20,6 +20,26 @@ class WorkflowStatus(str, Enum):
     HALTED = "halted"  # DNC or legal flag — all contacts must cease
 
 
+class EmotionalState(str, Enum):
+    NEUTRAL = "neutral"
+    ANGRY = "angry"
+    ANXIOUS = "anxious"
+    COOPERATIVE = "cooperative"
+
+
+class BehaviorPattern(str, Enum):
+    COMPLIANT = "compliant"
+    DELAYING = "delaying"
+    UNRESPONSIVE = "unresponsive"
+    COMBATIVE = "combative"
+
+
+class NegotiationStrategyType(str, Enum):
+    FIRM = "firm"
+    EMPATHETIC = "empathetic"
+    PRAGMATIC = "pragmatic"
+
+
 class FailureType(str, Enum):
     HALLUCINATION = "hallucination"
     POLICY_VIOLATION = "policy_violation"
@@ -78,12 +98,17 @@ class WorkflowState(BaseModel):
     prior_offers: list[float] = Field(default_factory=list)  # Borrower offer history
     last_message: str = ""
     history_summary: str = ""
+    emotional_state: EmotionalState = EmotionalState.NEUTRAL
+    behavior_pattern: BehaviorPattern = BehaviorPattern.COMPLIANT
+    active_strategy: NegotiationStrategyType = NegotiationStrategyType.PRAGMATIC
+    channel_metrics: dict[str, dict[str, int]] = Field(default_factory=dict)  # channel -> {successes: int, attempts: int}
     version: int = 0
     prompt_version: str = "extractor_v1"
     policy_version: str = "policy_v1"
     context_version: str = "ctx_v1"
     autonomy_level: AutonomyLevel = AutonomyLevel.HUMAN_REVIEW
     stale_after_hours: int = 48
+    next_contact_scheduled_at: datetime | None = None
     last_revalidated_at: datetime | None = None
     agreement_expires_at: datetime | None = None
     updated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
@@ -100,6 +125,8 @@ class LLMDecision(BaseModel):
         "CONFUSED",
         "UNKNOWN",
     ]
+    emotional_state: EmotionalState = EmotionalState.NEUTRAL
+    behavior_pattern: BehaviorPattern = BehaviorPattern.COMPLIANT
     amount: float | None = None
     confidence: float = Field(ge=0.0, le=1.0)
     contradictory: bool = False
@@ -111,6 +138,7 @@ class PolicyResult(BaseModel):
     allowed: bool
     reason_code: str
     next_action: str
+    recommended_strategy: NegotiationStrategyType = NegotiationStrategyType.PRAGMATIC
 
 
 class DecisionTrace(BaseModel):

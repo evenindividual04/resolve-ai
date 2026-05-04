@@ -128,6 +128,9 @@ export interface NegotiationState {
   negotiated_amount: number | null;
   outstanding_amount: number;
   strike_count: number;
+  emotional_state: string;
+  behavior_pattern: string;
+  active_strategy: string;
 }
 
 // ─── Messages ─────────────────────────────────────────────────────────────────

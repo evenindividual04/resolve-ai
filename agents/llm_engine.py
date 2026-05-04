@@ -30,8 +30,10 @@ class PromptRegistry:
             ),
             "extractor_v2": (
                 "Extract intent for debt negotiation. Return JSON only with keys: "
-                "intent, amount, confidence, contradictory, reasoning. "
-                "intents allowed: PAYMENT_OFFER, PAYMENT_COMMIT, HARDSHIP, ABUSIVE, CONFUSED, UNKNOWN."
+                "intent, amount, confidence, contradictory, reasoning, emotional_state, behavior_pattern. "
+                "intents allowed: PAYMENT_OFFER, PAYMENT_COMMIT, HARDSHIP, ABUSIVE, CONFUSED, UNKNOWN. "
+                "emotional_state allowed: neutral, angry, anxious, cooperative. "
+                "behavior_pattern allowed: compliant, delaying, unresponsive, combative."
             ),
         }
     )
@@ -145,7 +147,22 @@ class LLMEngine:
             "high": "direct and urgent",
             "critical": "formal and factual",
         }
-        tone = tone_map.get(risk_label, "professional")
+        base_tone = tone_map.get(risk_label, "professional")
+        
+        strategy_modifiers = {
+            "firm": "assertive, no-nonsense",
+            "empathetic": "understanding, supportive",
+            "pragmatic": "objective, solution-oriented",
+        }
+        strat_mod = strategy_modifiers.get(state.active_strategy.value, "")
+        
+        emo_mod = ""
+        if state.emotional_state.value == "angry":
+            emo_mod = "De-escalate the situation, remain calm."
+        elif state.emotional_state.value == "anxious":
+            emo_mod = "Be reassuring and clear."
+
+        tone = f"{base_tone}, {strat_mod}. {emo_mod}".strip(",. ")
 
         action_instructions = {
             "accept_offer": f"Confirm that the payment offer of {state.negotiated_amount} has been accepted. Provide the payment link.",
@@ -294,10 +311,23 @@ class LLMEngine:
         self._last_request_at = time.monotonic()
 
     def _parse_decision(self, raw: str, *, prompt_version: str) -> LLMDecision | None:
+        from domain.models import BehaviorPattern, EmotionalState
         try:
             data = json.loads(raw)
+            try:
+                emo = EmotionalState(str(data.get("emotional_state", "neutral")).lower())
+            except ValueError:
+                emo = EmotionalState.NEUTRAL
+                
+            try:
+                beh = BehaviorPattern(str(data.get("behavior_pattern", "compliant")).lower())
+            except ValueError:
+                beh = BehaviorPattern.COMPLIANT
+
             return LLMDecision(
                 intent=data.get("intent", "UNKNOWN"),
+                emotional_state=emo,
+                behavior_pattern=beh,
                 amount=data.get("amount"),
                 confidence=float(data.get("confidence", 0.0)),
                 contradictory=bool(data.get("contradictory", False)),
@@ -321,10 +351,12 @@ class LLMEngine:
             )
 
         if any(k in lower for k in ["abuse", "idiot", "stupid"]):
-            return LLMDecision(intent="ABUSIVE", confidence=0.95, contradictory=contradictory, prompt_version=prompt_version)
+            from domain.models import BehaviorPattern, EmotionalState
+            return LLMDecision(intent="ABUSIVE", emotional_state=EmotionalState.ANGRY, behavior_pattern=BehaviorPattern.COMBATIVE, confidence=0.95, contradictory=contradictory, prompt_version=prompt_version)
 
         if "hardship" in lower or "emergency" in lower:
-            return LLMDecision(intent="HARDSHIP", confidence=0.9, contradictory=contradictory, prompt_version=prompt_version)
+            from domain.models import BehaviorPattern, EmotionalState
+            return LLMDecision(intent="HARDSHIP", emotional_state=EmotionalState.ANXIOUS, behavior_pattern=BehaviorPattern.COMPLIANT, confidence=0.9, contradictory=contradictory, prompt_version=prompt_version)
 
         amount = self._extract_amount(lower)
         if "pay" in lower and amount is not None:

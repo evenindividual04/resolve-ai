@@ -13,6 +13,7 @@ from agents.profile_loader import ProfileLoader
 from agents.responder import Responder
 from agents.tool_actions import ToolActionEngine
 from domain.borrower import BorrowerProfile
+from domain.channel_router import ChannelRouter
 from domain.channels import normalize_channel_message
 from domain.models import (
     AutonomyLevel,
@@ -41,6 +42,7 @@ class Orchestrator:
         self.profile_loader = ProfileLoader()
         self.negotiation = NegotiationStrategy()
         self.responder = Responder(llm)
+        self.channel_router = ChannelRouter()
 
     async def process_event(self, event: Event) -> dict:
         # Idempotency gate
@@ -86,6 +88,19 @@ class Orchestrator:
             policy_result.reason_code = "autonomy_guardrail"
 
         # Update negotiation tracking
+        state.emotional_state = decision.emotional_state
+        state.behavior_pattern = decision.behavior_pattern
+        state.active_strategy = policy_result.recommended_strategy
+
+        if event.event_type == EventType.USER_MESSAGE:
+            if event.channel not in state.channel_metrics:
+                state.channel_metrics[event.channel] = {"successes": 0, "attempts": 0}
+            state.channel_metrics[event.channel]["successes"] += 1
+
+        if event.event_type == EventType.PAYMENT_WEBHOOK:
+            success = event.payload.get("status") == "paid"
+            self.negotiation.record_outcome(state.active_strategy, success)
+
         if decision.intent == "PAYMENT_OFFER" and decision.amount is not None:
             state.prior_offers = list(state.prior_offers) + [decision.amount]
 
@@ -157,12 +172,26 @@ class Orchestrator:
         # Generate and store outbound message
         outbound_message = None
         if event.event_type in {EventType.USER_MESSAGE, EventType.SCHEDULER_TIMEOUT}:
-            msg_log, guard_result = await self.responder.generate(policy_result.next_action, state, profile)
-            try:
-                await self.db.insert_message_log(msg_log.to_dict())
-            except Exception:  # noqa: BLE001
-                log.warning("message_log_insert_failed workflow_id=%s", state.workflow_id)
-            outbound_message = {"content": msg_log.content, "channel": msg_log.channel, "compliance_passed": guard_result.passed}
+            selected_channel = self.channel_router.select_channel(
+                profile, 
+                attempt_number=state.turn_count + 1, 
+                now=event.occurred_at, 
+                metrics=state.channel_metrics
+            ) if profile else "sms"
+            
+            if selected_channel not in ["wait", "halt"]:
+                msg_log, guard_result = await self.responder.generate(policy_result.next_action, state, profile)
+                msg_log.channel = selected_channel
+                
+                if selected_channel not in state.channel_metrics:
+                    state.channel_metrics[selected_channel] = {"successes": 0, "attempts": 0}
+                state.channel_metrics[selected_channel]["attempts"] += 1
+                
+                try:
+                    await self.db.insert_message_log(msg_log.to_dict())
+                except Exception:  # noqa: BLE001
+                    log.warning("message_log_insert_failed workflow_id=%s", state.workflow_id)
+                outbound_message = {"content": msg_log.content, "channel": msg_log.channel, "compliance_passed": guard_result.passed}
 
         trace = self._decision_trace(
             event,
@@ -240,6 +269,7 @@ class Orchestrator:
                 context_version=row.get("context_version", "ctx_v1"),
                 autonomy_level=row.get("autonomy_level", AutonomyLevel.HUMAN_REVIEW),
                 stale_after_hours=row.get("stale_after_hours", 48),
+                next_contact_scheduled_at=row.get("next_contact_scheduled_at"),
                 last_revalidated_at=row.get("last_revalidated_at"),
                 agreement_expires_at=row.get("agreement_expires_at"),
                 updated_at=row["updated_at"],

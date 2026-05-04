@@ -37,6 +37,9 @@ DEMO_WORKFLOWS = [
         "policy_version": "policy_v1",
         "context_version": "ctx_v1",
         "autonomy_level": "full_auto",
+        "emotional_state": "cooperative",
+        "behavior_pattern": "compliant",
+        "active_strategy": "pragmatic",
     },
     {
         "workflow_id": "demo-w-002",
@@ -51,6 +54,9 @@ DEMO_WORKFLOWS = [
         "policy_version": "policy_v1",
         "context_version": "ctx_v1",
         "autonomy_level": "human_review",
+        "emotional_state": "anxious",
+        "behavior_pattern": "delaying",
+        "active_strategy": "empathetic",
     },
     {
         "workflow_id": "demo-w-003",
@@ -65,6 +71,9 @@ DEMO_WORKFLOWS = [
         "policy_version": "policy_v1",
         "context_version": "ctx_v1",
         "autonomy_level": "blocked",
+        "emotional_state": "angry",
+        "behavior_pattern": "combative",
+        "active_strategy": "firm",
     },
     {
         "workflow_id": "demo-w-004",
@@ -79,6 +88,9 @@ DEMO_WORKFLOWS = [
         "policy_version": "policy_v1",
         "context_version": "ctx_v1",
         "autonomy_level": "full_auto",
+        "emotional_state": "neutral",
+        "behavior_pattern": "compliant",
+        "active_strategy": "pragmatic",
     },
     {
         "workflow_id": "demo-w-005",
@@ -93,6 +105,9 @@ DEMO_WORKFLOWS = [
         "policy_version": "policy_v1",
         "context_version": "ctx_v1",
         "autonomy_level": "human_review",
+        "emotional_state": "anxious",
+        "behavior_pattern": "delaying",
+        "active_strategy": "empathetic",
     },
 ]
 
@@ -176,6 +191,8 @@ DEMO_DECISION_TRACES = [
             "confidence": 0.92,
             "contradictory": False,
             "reasoning": "Customer explicitly offered $500 as payment",
+            "emotional_state": "cooperative",
+            "behavior_pattern": "compliant",
         },
         "policy_result": {
             "action": "accept",
@@ -200,6 +217,8 @@ DEMO_DECISION_TRACES = [
             "confidence": 0.88,
             "contradictory": False,
             "reasoning": "Customer reported job loss",
+            "emotional_state": "anxious",
+            "behavior_pattern": "delaying",
         },
         "policy_result": {
             "action": "escalate",
@@ -224,6 +243,8 @@ DEMO_DECISION_TRACES = [
             "confidence": 0.96,
             "contradictory": False,
             "reasoning": "Hostile language indicating refusal to cooperate",
+            "emotional_state": "angry",
+            "behavior_pattern": "combative",
         },
         "policy_result": {
             "action": "block",
@@ -248,6 +269,8 @@ DEMO_DECISION_TRACES = [
             "confidence": 0.89,
             "contradictory": False,
             "reasoning": "Customer committed to $400 by Friday",
+            "emotional_state": "neutral",
+            "behavior_pattern": "compliant",
         },
         "policy_result": {
             "action": "wait",
@@ -272,6 +295,8 @@ DEMO_DECISION_TRACES = [
             "confidence": 0.85,
             "contradictory": False,
             "reasoning": "Customer committed to $750 with retry tomorrow",
+            "emotional_state": "anxious",
+            "behavior_pattern": "delaying",
         },
         "policy_result": {
             "action": "wait",
@@ -358,6 +383,10 @@ async def seed_demo_data() -> None:
                 "stale_after_hours": 48,
                 "last_revalidated_at": None,
                 "agreement_expires_at": now + timedelta(days=30) if wf_template["state"] == "waiting_for_payment" else None,
+                "emotional_state": wf_template.get("emotional_state", "neutral"),
+                "behavior_pattern": wf_template.get("behavior_pattern", "compliant"),
+                "active_strategy": wf_template.get("active_strategy", "pragmatic"),
+                "channel_metrics": {},
                 "updated_at": now,
             }
             await db.upsert_workflow(workflow)

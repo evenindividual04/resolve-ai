@@ -61,6 +61,22 @@ export function NegotiationPanel({ negotiation, maxTurns = 8 }: NegotiationPanel
         )}
       </div>
 
+      {/* Behavioral Signals */}
+      <div className="stack" style={{ gap: 8 }}>
+        <span className="h6">Behavioral Signals</span>
+        <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+          <div className="status-chip" style={{ background: "var(--bg-inset)" }}>
+            <span className="subtle" style={{ marginRight: 4 }}>Emotion:</span> {negotiation.emotional_state}
+          </div>
+          <div className="status-chip" style={{ background: "var(--bg-inset)" }}>
+            <span className="subtle" style={{ marginRight: 4 }}>Behavior:</span> {negotiation.behavior_pattern}
+          </div>
+          <div className="status-chip" style={{ background: "var(--bg-inset)" }}>
+            <span className="subtle" style={{ marginRight: 4 }}>Strategy:</span> {negotiation.active_strategy}
+          </div>
+        </div>
+      </div>
+
       {/* Strike count */}
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span className="h6">Strikes</span>

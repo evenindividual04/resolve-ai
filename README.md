@@ -1,184 +1,262 @@
-# Resolve AI
-Resolve AI is an infra-first, production-grade AI workflow platform for high-stakes negotiation operations.
+# Resolve AI — Borrower Collections Intelligence System
+
+A production-architecture AI system for managing borrower interactions end-to-end: from first contact through negotiation, follow-up, payment commitment, and recovery — without a human in the loop unless one is required.
 
 <p align="center">
   <video src="./video/out.mp4" controls width="100%" style="border-radius: 12px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);"></video>
 </p>
 
-It is built for teams that need AI to act as a decision signal, not a free-form control plane. Every step is deterministic where it must be, traceable where it matters, and resilient when systems or models fail.
+The model is not the agent. The system is. LLMs are used to read borrower signals. Every consequential decision — what to offer, when to escalate, whether to contact at all — is made by the policy engine, not the model.
+
+---
+
+## Why This System Exists in the Real World
+
+Debt collection is a coordination problem that breaks most software.
+
+A borrower doesn't respond in a clean linear sequence. They go silent for 5 days, then message at 11pm claiming hardship, then make an offer they later retract, then default on a payment commitment. An agent managing this interaction can't just process one message at a time. It has to carry context across days, adapt strategy based on behaviour it has observed, and respond differently to a cooperative borrower than to an avoidant one.
+
+**Why borrower behaviour breaks naive AI systems:**
+
+Borrowers are irrational, inconsistent, and sometimes manipulative — not because they are bad actors, but because money stress produces non-rational behaviour. A system that takes messages at face value and extracts intent from them one at a time will fail immediately:
+
+- A borrower offers ₹5,000 when the outstanding is ₹45,000. Is this a lowball anchor or genuine hardship? The answer requires knowing their repayment history, DPD, prior defaults, and what they said two days ago.
+- A borrower says "I'll pay Friday." Three Fridays pass. Do you re-contact? When? On which channel? With what tone?
+- A borrower claims job loss. Is this real? The system can't verify — but it can route to a human for review rather than blindly offering a waiver.
+
+A language model cannot answer these questions reliably on its own. It introduces stochasticity into decisions that must be deterministic, reproducible, and auditable.
+
+**Why deterministic workflows are required:**
+
+Collections platforms operate under strict regulatory constraints — TRAI's DNC registry, RBI fair practices guidelines, state-level consumer protection law. A single violation (contacting a DNC-flagged borrower, threatening legal action through a message, sharing a borrower's data) can expose the institution to regulatory and legal risk.
+
+You can't run a probabilistic agent over regulated financial workflows. You need hard gates that fire before any model inference. You need an audit trail that a regulator can inspect and re-execute. You need a system that fails safely when the model is uncertain, not one that guesses forward.
+
+This system is the infrastructure layer that makes AI-driven collections trustworthy enough to run at scale.
+
+---
+
+## How This Maps to Real Debt Collection Systems
+
+This is a prototype of the infrastructure stack a platform like Riverline runs in production.
+
+Riverline operates AI agents that contact borrowers across WhatsApp, SMS, email, and voice. Those agents run long-running workflows — not single-turn conversations — that span days or weeks. They track borrower psychology, adapt negotiation strategy, enforce compliance in real time, and escalate to human operators with full context when the situation demands it.
+
+This system implements the same architecture at production depth:
+
+| Real Collections Problem | How This System Handles It |
+|---|---|
+| Borrower goes silent for days | Scheduler detects inactivity, emits re-engagement timeout event |
+| Payment commitment expires | Agreement expiry tracked per-workflow; `SCHEDULER_TIMEOUT` triggers follow-up |
+| Borrower claims hardship | LLM extracts hardship signal; policy routes to human review or EMI offer |
+| Borrower becomes abusive | Intent classified as `ABUSIVE`; workflow escalated immediately, no further contact |
+| DNC-flagged borrower contacted | Hard gate fires before LLM call; workflow halted, no message sent |
+| Agent offers too high a discount | Policy engine caps discount at segment-specific floor; offer rejected |
+| Same payment webhook fires 3x | Idempotency key deduplication; single execution guaranteed |
+| Regulator asks for decision trail | Full event log + decision traces with SHA-256 checksums; replay to verify |
+| Channel gets no response | Escalation sequence: preferred channel → WhatsApp → SMS → Email → Voice |
+| Negotiation stalls for 8 turns | Turn budget exhausted; workflow escalates, operator reviews |
+
+The agent layer is intentionally thin. Contact logic, channel selection, compliance enforcement, counter-offer calculation, and escalation routing are all deterministic. The model reads borrower language. The system acts.
+
+---
 
 ## Why It Exists
-Most AI agent systems are easy to demo and hard to trust in production. Resolve AI is designed for the opposite:
 
-- Predictable workflow execution under strict policy constraints
-- Full auditability for every model decision, action, and retry
-- Safe handling of ambiguity, abuse, stale state, and duplicate events
-- A learning loop that turns real operator feedback into better prompts and better evaluation data
+Most AI agent frameworks are built for productivity tools: helpful, fast, occasionally wrong. That's acceptable when the cost of being wrong is a slightly bad calendar event.
 
-If you need to run AI over operational workflows where correctness, compliance, and reproducibility matter, this project is the control surface.
+In collections, the cost of a wrong decision is:
+- contacting a borrower in a prohibited window (TRAI violation)
+- offering a discount beyond the approved policy floor (revenue loss)
+- sending an abusive-sounding message under the institution's name (compliance and reputational risk)
+- processing a payment twice because a UPI webhook fired twice (financial reconciliation error)
+
+This system is designed for the opposite of "occasionally wrong." Every decision is bounded by policy. Every action is logged. Every failure path has a defined resolution. Operators can replay any workflow and get the same output the live system produced.
+
+---
 
 ## What It Does
-Resolve AI manages negotiation-style workflows end to end:
 
-- Ingests events idempotently and records them as an append-only history
-- Extracts structured intent from model outputs with provider routing and fallback behavior
-- Applies deterministic policy gates before any action is allowed to move forward
-- Maintains a decision ledger with costs, checksums, and replay data
-- Escalates ambiguous or risky cases with SLA-aware operator workflows
-- Exposes economics, incident, feedback, and learning endpoints for operational visibility
-- Surfaces the entire system through an operator console built for fast triage
+This system manages the full borrower interaction lifecycle:
 
-## Product Highlights
-- Deterministic workflow state machine with strict transitions
-- Decision traces that capture LLM output, policy output, costs, and replay checksums
-- Replay engine for auditability and consistency verification
-- Runtime uncertainty controls, including confidence gating and multi-run variance checks
+- **First contact:** Selects channel based on borrower profile, timezone, and DNC status. Generates a compliant outbound message.
+- **Intent extraction:** Reads incoming borrower messages and extracts structured signals — payment offer, hardship claim, abusive language, confusion — using an LLM constrained to JSON output.
+- **Negotiation:** Evaluates borrower offers against a policy matrix (risk band × loan segment). Computes counter-offers using a bounded concession curve. Tracks turns. Detects anchoring.
+- **Behavioural tracking:** Tracks emotional state and behaviour pattern across turns. Adjusts strategy — Firm, Empathetic, or Pragmatic — based on how the borrower is engaging.
+- **Follow-up:** Background scheduler detects stale workflows and payment commitment timeouts. Emits re-engagement events without operator intervention.
+- **Escalation:** Routes to human operators with full context — reason code, decision history, SLA deadline — when the system cannot safely proceed autonomously.
+- **Payment lifecycle:** Tracks commitment, generates payment link, processes webhook, detects failure, and re-engages.
+- **Audit trail:** Every event, decision, and state change is persisted. Full replay with SHA-256 integrity checking.
+
+---
+
+## System Design
+
+The system runs two execution paths. A message arrives from a borrower. Or a background scheduler determines that a borrower has gone silent.
+
+In both cases, the execution sequence is:
+
+```
+Incoming message / timeout
+         ↓
+Orchestrator.process_event()
+         ↓
+DNC gate — halt immediately if flagged, no LLM call
+         ↓
+LLMEngine — extract intent signal (JSON): { intent, amount, confidence, emotional_state, behavior_pattern }
+         ↓
+PolicyEngine — evaluate signal against policy: { allowed, reason_code, next_action, recommended_strategy }
+         ↓
+AutonomyCheck — if confidence < threshold or variance > 0.34, escalate rather than proceed
+         ↓
+apply_transition() — validate state change is legal; escalate on illegal transition
+         ↓
+Responder — generate compliant outbound message, gated by ComplianceGuard
+         ↓
+ChannelRouter — select channel by borrower profile, success metrics, and timezone window
+         ↓
+Persist: event log, decision trace, message log, updated workflow state
+```
+
+The model touches two steps. Everything else is deterministic.
+
+### Runtime Components
+
+- **API (FastAPI):** Event ingestion, workflow queries, replay, economics, feedback, escalation, incidents, learning endpoints
+- **Orchestrator:** Stateful coordination of every step above. Handles idempotency, stale state detection, tool side-effects, failure recording.
+- **Policy Engine:** Compliance gates and business rules. Determines action. LLM output is an input here, not the output.
+- **Negotiation Strategy:** Risk band × segment policy matrix. Bounded concession curve. Turn budgets. EMI eligibility. Dynamically adjusted by selected strategy type.
+- **LLM Engine:** Multi-provider (Groq, Cerebras, Gemini), parallel consistency sampling, critic pass on uncertain decisions. Structured extraction only.
+- **Channel Router:** Timezone-aware, DNC-aware, success-rate-aware channel selection.
+- **Compliance Guard:** Regex hard-blocks for threat language, PII, and illegal promises. Runs on every outbound message before delivery.
+- **Scheduler:** asyncio background task. Detects expired agreements and silent workflows. Emits re-engagement events with idempotency.
+- **Storage:** PostgreSQL or SQLite for workflow state, events, traces; Redis Streams for async event queue with DLQ.
+- **Ops Console (Next.js):** Operator triage interface. Workflows, escalations, message logs, decision ledger, economics, feedback.
+
+### Execution Modes
+
+- **Direct mode:** `POST /events` — processed synchronously in the API process. Simple deployments.
+- **Queue mode:** `POST /events` — enqueued to Redis Streams. Worker consumes and processes. Production deployments.
+
+---
+
+## Borrower Lifecycle States
+
+```
+INIT → CONTACTED → NEGOTIATING → WAITING_FOR_PAYMENT → RESOLVED
+                       ↓                  ↓
+                   ESCALATED         PAYMENT_FAILED → NEGOTIATING (re-engage)
+                       ↓
+                    HALTED (DNC / legal flag)
+```
+
+State transitions are validated by a strict transition table. An invalid transition (e.g. `RESOLVED → NEGOTIATING`) throws a `TransitionError` that the orchestrator catches, logs, and escalates. The state machine cannot be bypassed.
+
+---
+
+## Behavioural Intelligence
+
+Borrowers are not interchangeable. A borrower who has been cooperative across three turns and made a realistic offer should be handled differently than one who has been avoidant for a week and then sent a hostile message.
+
+The system tracks:
+
+- **Emotional state** per turn: `neutral`, `anxious`, `angry`, `cooperative`
+- **Behaviour pattern**: `compliant`, `delaying`, `unresponsive`, `combative`
+- **Repayment probability**: a score derived from risk band, DPD, prior defaults, emotional state, behaviour pattern, and strike count
+
+These signals feed directly into strategy selection:
+
+| Borrower Signal | Selected Strategy | Effect |
+|---|---|---|
+| Angry / combative | `FIRM` | Tighter discounts, shorter turn budget, formal tone |
+| Anxious / hardship | `EMPATHETIC` | Wider EMI eligibility, more turns, softer language |
+| Cooperative / normal | `PRAGMATIC` | Standard bounds, concession curve active |
+| Low repayment probability | `FIRM` | Hold position, escalate faster |
+
+Strategy selection is deterministic given inputs. The LLM adjusts its response tone to match. It does not decide the strategy.
+
+---
+
+## Product Capabilities
+
+- Deterministic workflow state machine with policy-enforced transitions
+- Adaptive behavioural intelligence: emotional state tracking, strategy selection, tone adaptation
+- Full audit trail: every decision recorded with `prompt_version`, `policy_version`, `model_name`, `confidence`, `checksum`
+- Replay engine: re-execute any workflow from its event log, compare output against stored traces, detect divergence
+- Runtime uncertainty controls: confidence gating, 3-sample consistency check, critic pass for ambiguous signals
 - Stale-state detection and agreement expiry handling
-- Multi-provider LLM routing across Groq, Cerebras, and Gemini
-- Redis Streams queue mode for asynchronous execution
-- Escalation management with priority and SLA metadata
-- Observability endpoints for metrics, economics, failures, and trust guarantees
-- Feedback collection and learning pipelines for continuous improvement
+- Multi-provider LLM routing: Groq, Cerebras, Gemini — with retry, backoff, and deterministic fallback
+- Redis Streams queue mode with DLQ for zero-loss async processing
+- Escalation management with priority, SLA metadata, and operator handoff
+- Channel routing with timezone enforcement, success rate tracking, and DNC hard gates
+- Compliance guard: threat language, PII leakage, illegal promises — blocked before delivery
+- Feedback collection and learning pipelines
 - Adversarial evaluation harness for regression resistance
 
-## How It Works
-
-### 1. Event Ingestion
-Clients post workflow events to the API. Events are deduplicated via `idempotency_key`, persisted, and either processed immediately or queued for worker execution.
-
-### 2. Structured Extraction
-The LLM engine converts raw conversation text into structured intent output. If confidence is low or the decision looks risky, the system can run a verifier pass or fall back to deterministic extraction.
-
-### 3. Policy Enforcement
-Policy gates decide what is allowed, what should be clarified, and what must be escalated. This keeps model output from directly controlling the workflow.
-
-### 4. Decision Ledger
-Every execution writes a trace record with:
-
-- input and output payloads
-- prompt version and policy version
-- model name
-- confidence and cost
-- checksum for replay validation
-- autonomy level and failure annotations
-
-### 5. Operator Review
-Escalations, feedback, economics, and timeline views live in the ops console so non-engineers can inspect workflows without digging through raw logs.
-
-### 6. Learning Loop
-Feedback can be turned into retraining data and evaluated against red-team scenarios and real traces, making prompt iteration safer and more repeatable.
-
-## Architecture
-
-High-level runtime components:
-
-- **API Layer (FastAPI):** event ingestion, workflow queries, replay, economics, feedback, incidents, and learning endpoints
-- **Workflow Core:** deterministic orchestration and transition engine
-- **Policy Engine:** compliance gates and action constraints
-- **LLM Engine:** provider-routed extraction with retry and fallback logic
-- **Storage:** PostgreSQL or SQLite for state and traces; Redis for queue transport
-- **Ops Console (Next.js):** productized operator views for workflows, escalations, economics, feedback, incidents, and trace inspection
-
-Execution modes:
-
-- **Direct mode:** `POST /events` processes immediately in the API process
-- **Queue mode:** `POST /events` enqueues to Redis Streams and a worker consumes the event
-
-## Workflow Model
-
-Primary states:
-
-- `init`
-- `contacted`
-- `negotiating`
-- `waiting_for_payment`
-- `payment_failed`
-- `resolved`
-- `escalated`
-
-Guarantees:
-
-- Illegal transitions are blocked and escalated
-- Duplicate events are safely deduplicated
-- Replay can verify action sequence and resulting state
+---
 
 ## API Surface
 
-Core endpoints:
+**Core workflow:**
 
-- `POST /events`
-- `GET /workflows/{id}`
-- `GET /workflows/{id}/timeline`
-- `GET /workflows/{id}/trace` (legacy alias)
-- `POST /workflows/{id}/replay`
-- `GET /escalations`
-- `POST /escalations/{id}/actions`
-- `POST /escalations/{id}/action` (legacy alias)
+- `POST /events` — ingest borrower event or system event
+- `GET /workflows/{id}` — full workflow state with cost summary
+- `GET /workflows/{id}/timeline` — event + decision history
+- `GET /workflows/{id}/negotiation` — current negotiation state with behavioural signals
+- `GET /workflows/{id}/messages` — outbound message log with compliance status
+- `POST /workflows/{id}/replay` — re-execute from event log, return diff
+- `GET /workflows/{id}/failures` — failure record for this workflow
 
-Operations and governance:
+**Operations:**
 
-- `GET /economics/summary`
-- `GET /metrics`
-- `POST /feedback`
-- `GET /feedback`
-- `GET /failures/summary`
-- `GET /workflows/{id}/failures`
-- `POST /incidents/simulate`
-- `GET /incidents/{id}`
-- `POST /learning/retraining/build`
-- `POST /learning/retraining/run`
-- `POST /learning/self_critique/run`
-- `GET /trust/guarantees`
+- `GET /escalations` — SLA-sorted escalation queue
+- `POST /escalations/{id}/actions` — operator action (assign, resolve, close)
+- `GET /economics/summary` — cost per workflow, per resolution, model breakdown
+- `GET /metrics/business` — resolution rate, escalation rate, avg turns to close
+- `GET /metrics` — infrastructure Prometheus metrics
+- `POST /feedback` — operator signal capture
+- `GET /failures/summary` — failure taxonomy and recovery rates
+- `POST /incidents/simulate` — chaos testing
+- `POST /learning/retraining/build` — generate retraining dataset from live traces
+- `POST /learning/retraining/run` — run learning cycle
+- `GET /trust/guarantees` — machine-readable trust contract
+
+---
+
+## Reliability
+
+Collections systems fail in specific, predictable ways. Each one has a defined handling path:
+
+- **Duplicate events** (UPI webhooks, gateway retries): `idempotency_key` deduplication. Same key = ignored.
+- **LLM uncertainty**: 3-sample consistency check. `variance > 0.34` = intent degraded to UNKNOWN, workflow escalates.
+- **LLM timeout or provider failure**: exponential retry across providers, deterministic fallback to rule-based extraction.
+- **Invalid state transition**: `TransitionError` caught, workflow escalated, failure recorded.
+- **Payment commitment expiry**: scheduler detects, emits timeout event, workflow re-engages borrower.
+- **Borrower goes silent**: inactivity threshold configurable per segment; scheduler emits re-engagement event.
+- **Tool failure** (payment link generation): saga compensation log records partial execution; operator can resolve.
+- **Queue overflow or worker failure**: Redis Streams DLQ at `negotiation:events:dlq`. No silent discard.
+
+---
 
 ## Evaluation and Safety
 
-The repository includes both regression-focused evaluation and learning infrastructure:
+The test suite covers unit and integration paths. The adversarial evaluation harness covers cases that unit tests cannot — prompt injection, borrower contradiction, hardship-as-manipulation, deliberate ambiguity.
 
-- red-team adversarial cases for prompt injection, contradiction, and hardship escalation
-- prompt-eval dataset helpers for replaying real traces offline
-- experiment comparison helpers for baseline vs candidate prompt versions
-- retraining dataset generation and learning-cycle scripts
-- operator feedback capture to improve future prompt and policy iterations
-
-That combination is what makes the system practical for real teams: it is not only observable, it is measurable.
-
-## LLM Providers
-
-Supported providers:
-
-- Groq
-- Cerebras
-- Gemini
-
-Behavior:
-
-- Structured JSON intent extraction
-- Retry with exponential backoff
-- Verifier pass for high-risk or low-confidence decisions
-- Deterministic fallback when provider calls are unavailable or invalid
-
-## Ops Console
-
-Path: `ops-console/`
-
-The console is designed as an internal product surface, not a bare dashboard.
-
-Run it with:
+- Red-team adversarial cases for compliance violations and edge-case escalation paths
+- Prompt-eval dataset helpers for replaying real traces offline with candidate prompt versions
+- Experiment comparison helpers for measuring policy or prompt version changes against a baseline
+- Retraining dataset generation from live decision traces
+- Operator feedback capture for iteration signal
 
 ```bash
-cd ops-console
-npm install
-NEXT_PUBLIC_API_BASE=http://localhost:8000 npm run dev
+# Full test suite
+uv run pytest -q
+
+# Adversarial regression gate
+uv run python scripts/regression_gate.py
 ```
 
-Available pages:
-
-- `/` overview
-- `/escalations`
-- `/workflows/{id}`
-- `/economics`
-- `/feedback`
-- `/incidents`
+---
 
 ## Running the System
 
@@ -186,7 +264,7 @@ Available pages:
 
 - Python 3.11+
 - [uv](https://docs.astral.sh/uv/)
-- Docker for containerized runtime
+- Docker (for Redis + containerized runtime)
 - Node 18+ for the ops console
 
 ### Local backend
@@ -210,147 +288,122 @@ docker compose up --build
 
 ### Demo Data
 
-To populate the ops console with realistic sample workflows for immediate visibility:
+Seed realistic borrower workflows with varied states — resolved, negotiating, escalated, awaiting payment, payment failed:
 
 ```bash
-# After services are up, seed demo workflows
 uv run python scripts/seed_demo_data.py
 ```
 
-This creates 5 sample workflows with events, decision traces, escalations, and feedback signals. The ops console dashboard will immediately show workflows in various states (resolved, negotiating, escalated, waiting for payment, payment failed).
-
-Safe to run multiple times; uses idempotency to prevent duplicates.
-
-## Configuration
-
-Environment variables:
-
-- `DATABASE_URL`
-- `REDIS_URL`
-- `USE_QUEUE_INGEST` (`true|false`)
-- `ORCHESTRATION_ENGINE` (`custom`)
-- `ENABLE_OTEL` (`true|false`)
-
-Queue hardening:
-
-- `QUEUE_MAX_RETRIES` (default: `3`)
-- `QUEUE_RETRY_BACKOFF_SECONDS` (default: `0.5`)
-
-LLM runtime hardening:
-
-- `LLM_REQUEST_TIMEOUT_SECONDS` (default: `12`)
-- `LLM_REQUEST_MAX_RETRIES` (default: `3`)
-- `LLM_MIN_REQUEST_INTERVAL_SECONDS` (default: `0`)
-
-LLM selection:
-
-- `LLM_PROVIDER` (`groq|cerebras|gemini`)
-- `GROQ_API_KEY`, `GROQ_MODEL`
-- `CEREBRAS_API_KEY`, `CEREBRAS_MODEL`
-- `GEMINI_API_KEY`, `GEMINI_MODEL`
-
-See [.env.example](/Users/anmolsen/Developer/resolve-ai/.env.example).
-
-## Testing and Quality Gates
-
-Run the test suite:
-
-```bash
-uv run pytest -q
-```
-
-Run the adversarial evaluation gate:
-
-```bash
-uv run python scripts/regression_gate.py
-```
-
-Integration test path:
-
-- PostgreSQL + Redis service containers
-- Integration tests in `tests/test_integration_services.py`
-
-## Learning Pipeline
-
-Generate retraining artifacts:
-
-```bash
-uv run python scripts/build_retraining_dataset.py
-```
-
-Run the end-to-end learning cycle:
-
-```bash
-uv run python scripts/run_learning_cycle.py
-```
-
-Artifacts are written under `artifacts/retraining/` with a `latest/` mirror.
-
-## Reliability and Safety Controls
-
-- Idempotent event processing
-- Guardrails for ambiguous, contradictory, or abusive input
-- Escalation circuit paths with SLA metadata
-- Replay validation for audit and consistency checks
-- Structured operational metrics and trace IDs for incident triage
-
-## Current Scope
-
-Implemented:
-
-- Custom orchestrator and adapter boundary
-- Provider-routed LLM extraction
-- Queue + worker model
-- Operator-focused internal console
-- Feedback-driven learning data pipeline
-- Prompt-eval dataset and experiment helpers
-
-Not implemented yet:
-
-- Full Temporal SDK workflow/activity runtime, though the adapter boundary exists
-- Fully managed model retraining and serving deployment automation
-- Enterprise-grade alerting and dashboards beyond the current observability layer
-
-Temporal is explicitly blocked in this build and will fail fast if selected.
-
-## Trust Guarantees
-
-Machine-readable trust contract is exposed at `GET /trust/guarantees`.
-
-Current guarantees:
-
-- No duplicate action execution for the same idempotency key
-- Bounded failure paths (`retry`, `degrade`, `escalate`) with stored taxonomy
-- Replay and auditability checks including state diff
-
-Known assumptions:
-
-- The database remains the source of truth for state and traces
-- Queue durability follows Redis stream and runtime configuration
-
-## Repository Layout
-
-- `api/` FastAPI endpoints
-- `workflow/` orchestration, transitions, adapters
-- `agents/` LLM, policy, and tool actions
-- `infra/` DB, queue, settings, observability
-- `domain/` contracts and channel normalization
-- `evals/` red-team and evaluation harness
-- `scripts/` worker and learning utilities
-- `ops-console/` Next.js operator console
-- `tests/` unit, integration, and regression tests
-
-## Suggested Entry Points
-
-If you are evaluating this project as a product, start here:
-
-1. `workflow/orchestrator.py` for execution semantics
-2. `api/app.py` for the public contract and runtime mode
-3. `ops-console/` for the operator experience
-4. `tests/` for reliability and adversarial coverage
+Each demo workflow includes behavioural signals, decision traces, and escalations. Safe to run multiple times.
 
 ---
 
-Resolve AI is meant to be operated, audited, and improved, not just demoed.
+## Configuration
 
-See `docs/DEPLOYMENT.md` for a production deployment runbook without Temporal.
+```
+DATABASE_URL            # PostgreSQL or SQLite connection string
+REDIS_URL               # Redis connection for queue and DLQ
+USE_QUEUE_INGEST        # true = async queue mode, false = direct processing
+ORCHESTRATION_ENGINE    # custom (Temporal adapter boundary exists but is not active)
+ENABLE_OTEL             # OpenTelemetry tracing
+
+QUEUE_MAX_RETRIES               default: 3
+QUEUE_RETRY_BACKOFF_SECONDS     default: 0.5
+
+LLM_PROVIDER              groq | cerebras | gemini
+LLM_REQUEST_TIMEOUT_SECONDS     default: 12
+LLM_REQUEST_MAX_RETRIES         default: 3
+GROQ_API_KEY / GROQ_MODEL
+CEREBRAS_API_KEY / CEREBRAS_MODEL
+GEMINI_API_KEY / GEMINI_MODEL
+```
+
+See `.env.example`.
+
+---
+
+## Learning Pipeline
+
+Live decision traces are the training signal. The learning pipeline converts them into retraining data, runs evaluation against red-team scenarios, and measures prompt version performance against a baseline before any change ships.
+
+```bash
+uv run python scripts/build_retraining_dataset.py
+uv run python scripts/run_learning_cycle.py
+```
+
+Artifacts written to `artifacts/retraining/latest/`.
+
+---
+
+## Current Scope
+
+Implemented at production depth:
+
+- Custom orchestrator with full state machine, policy, and compliance stack
+- Multi-provider LLM extraction with consistency sampling and critic pass
+- Behavioural intelligence: emotional state, behaviour pattern, dynamic strategy selection
+- Redis Streams queue mode with DLQ and retry
+- Ops console with workflow triage, escalation management, economics, feedback
+- Feedback-driven learning pipeline and adversarial evaluation harness
+
+Stubbed (real integrations are drop-in replacements):
+
+- WhatsApp/SMS delivery — channel is string; replace with Twilio or Meta API
+- Voice transcription — transcript field in payload; replace with STT
+- Payment link — mock URL returned; replace with payment gateway
+- Borrower CRM — deterministic profile loader; replace with API call to your CRM
+- ML-based risk scoring — rule-based today; extend with model scores
+
+Not implemented:
+
+- Full Temporal SDK workflow/activity runtime (adapter boundary exists; Temporal fails fast if selected)
+- Managed model retraining and serving automation
+
+---
+
+## Trust Guarantees
+
+Machine-readable contract at `GET /trust/guarantees`.
+
+- No duplicate action execution for the same `idempotency_key`
+- Bounded failure paths: `retry → degrade → escalate` with stored taxonomy
+- Replay and auditability: re-execute any workflow from its event log, detect divergence with SHA-256
+
+Known assumptions:
+
+- Database is the source of truth. State and traces are only as durable as the DB.
+- Queue durability follows Redis stream and runtime configuration.
+
+---
+
+## Repository Layout
+
+```
+api/            FastAPI endpoints — event ingestion, queries, operations
+workflow/       Orchestrator, state machine transitions, adapter boundary
+agents/         LLM engine, policy engine, negotiation strategy, responder
+infra/          Database, queue, scheduler, settings, observability
+domain/         Core domain models, borrower profile, channel router, compliance
+evals/          Red-team adversarial harness, prompt eval helpers
+scripts/        Worker, learning cycle, seed data, regression gate
+ops-console/    Next.js operator console
+tests/          Unit, integration, and adversarial coverage
+```
+
+---
+
+## Entry Points
+
+If you are reading this as a technical evaluator, start here:
+
+1. `workflow/orchestrator.py` — the execution engine; every design decision is visible here
+2. `agents/policy_engine.py` — what the system actually decides and why
+3. `agents/negotiation_strategy.py` — how the system handles a borrower in negotiation
+4. `domain/models.py` — the data contracts that define system behaviour
+5. `ops-console/` — what an operator sees when a workflow needs attention
+
+---
+
+Resolve AI is built to be operated, audited, and improved — not demoed once and shelved.
+
+See `docs/architecture.md` for design decisions. See `docs/DEPLOYMENT.md` for production deployment.

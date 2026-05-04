@@ -47,6 +47,7 @@ class ChannelRouter:
         profile: BorrowerProfile,
         attempt_number: int,
         now: datetime,
+        metrics: dict[str, dict[str, int]] | None = None,
     ) -> str:
         """Return the channel to use for the given contact attempt.
 
@@ -70,7 +71,20 @@ class ChannelRouter:
         if attempt_number <= 2:
             return profile.preferred_channel.value
 
-        # Beyond attempt 2, escalate through the sequence
+        # Beyond attempt 2, if metrics exist, pick the channel with the best success rate
+        if metrics:
+            best_channel = None
+            best_rate = -1.0
+            for ch, data in metrics.items():
+                if data.get("attempts", 0) > 0:
+                    rate = data.get("successes", 0) / data.get("attempts", 0)
+                    if rate > best_rate and rate > 0.1:
+                        best_rate = rate
+                        best_channel = ch
+            if best_channel:
+                return best_channel
+
+        # Fallback to escalate through the sequence
         idx = min(attempt_number - 1, len(_ESCALATION_SEQUENCE) - 1)
         return _ESCALATION_SEQUENCE[idx].value
 
