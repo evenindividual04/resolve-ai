@@ -187,33 +187,34 @@ class Database:
         async with self.engine.begin() as conn:
             await conn.run_sync(metadata.create_all)
             # Lightweight in-place compatibility migrations for existing SQLite dev DBs.
-            for stmt in [
-                "ALTER TABLE workflows ADD COLUMN context_version VARCHAR DEFAULT 'ctx_v1'",
-                "ALTER TABLE workflows ADD COLUMN autonomy_level VARCHAR DEFAULT 'human_review'",
-                "ALTER TABLE workflows ADD COLUMN stale_after_hours INTEGER DEFAULT 48",
-                "ALTER TABLE workflows ADD COLUMN last_revalidated_at TIMESTAMP NULL",
-                "ALTER TABLE workflows ADD COLUMN agreement_expires_at TIMESTAMP NULL",
-                "ALTER TABLE workflows ADD COLUMN counter_offer_amount FLOAT NULL",
-                "ALTER TABLE workflows ADD COLUMN turn_count INTEGER DEFAULT 0",
-                "ALTER TABLE workflows ADD COLUMN prior_offers JSON DEFAULT '[]'",
-                "ALTER TABLE workflows ADD COLUMN loan_segment VARCHAR DEFAULT 'personal'",
-                "ALTER TABLE workflows ADD COLUMN risk_band VARCHAR DEFAULT 'medium'",
-                "ALTER TABLE workflows ADD COLUMN emotional_state VARCHAR DEFAULT 'neutral'",
-                "ALTER TABLE workflows ADD COLUMN behavior_pattern VARCHAR DEFAULT 'compliant'",
-                "ALTER TABLE workflows ADD COLUMN active_strategy VARCHAR DEFAULT 'pragmatic'",
-                "ALTER TABLE workflows ADD COLUMN channel_metrics JSON DEFAULT '{}'",
-                "ALTER TABLE workflows ADD COLUMN next_contact_scheduled_at TIMESTAMP NULL",
-                "ALTER TABLE decision_traces ADD COLUMN autonomy_level VARCHAR DEFAULT 'human_review'",
-                "ALTER TABLE decision_traces ADD COLUMN critic_result JSON DEFAULT '{}'",
-                "ALTER TABLE decision_traces ADD COLUMN consistency_variance FLOAT DEFAULT 0.0",
-                "ALTER TABLE decision_traces ADD COLUMN failure_score JSON DEFAULT '{}'",
-                "ALTER TABLE decision_traces ADD COLUMN tool_compensation_applied INTEGER DEFAULT 0",
-                "ALTER TABLE decision_traces ADD COLUMN is_llm_call INTEGER DEFAULT 1",
-            ]:
-                try:
-                    await conn.exec_driver_sql(stmt)
-                except Exception:
-                    pass
+            if self.engine.dialect.name == "sqlite":
+                for stmt in [
+                    "ALTER TABLE workflows ADD COLUMN context_version VARCHAR DEFAULT 'ctx_v1'",
+                    "ALTER TABLE workflows ADD COLUMN autonomy_level VARCHAR DEFAULT 'human_review'",
+                    "ALTER TABLE workflows ADD COLUMN stale_after_hours INTEGER DEFAULT 48",
+                    "ALTER TABLE workflows ADD COLUMN last_revalidated_at TIMESTAMP NULL",
+                    "ALTER TABLE workflows ADD COLUMN agreement_expires_at TIMESTAMP NULL",
+                    "ALTER TABLE workflows ADD COLUMN counter_offer_amount FLOAT NULL",
+                    "ALTER TABLE workflows ADD COLUMN turn_count INTEGER DEFAULT 0",
+                    "ALTER TABLE workflows ADD COLUMN prior_offers JSON DEFAULT '[]'",
+                    "ALTER TABLE workflows ADD COLUMN loan_segment VARCHAR DEFAULT 'personal'",
+                    "ALTER TABLE workflows ADD COLUMN risk_band VARCHAR DEFAULT 'medium'",
+                    "ALTER TABLE workflows ADD COLUMN emotional_state VARCHAR DEFAULT 'neutral'",
+                    "ALTER TABLE workflows ADD COLUMN behavior_pattern VARCHAR DEFAULT 'compliant'",
+                    "ALTER TABLE workflows ADD COLUMN active_strategy VARCHAR DEFAULT 'pragmatic'",
+                    "ALTER TABLE workflows ADD COLUMN channel_metrics JSON DEFAULT '{}'",
+                    "ALTER TABLE workflows ADD COLUMN next_contact_scheduled_at TIMESTAMP NULL",
+                    "ALTER TABLE decision_traces ADD COLUMN autonomy_level VARCHAR DEFAULT 'human_review'",
+                    "ALTER TABLE decision_traces ADD COLUMN critic_result JSON DEFAULT '{}'",
+                    "ALTER TABLE decision_traces ADD COLUMN consistency_variance FLOAT DEFAULT 0.0",
+                    "ALTER TABLE decision_traces ADD COLUMN failure_score JSON DEFAULT '{}'",
+                    "ALTER TABLE decision_traces ADD COLUMN tool_compensation_applied INTEGER DEFAULT 0",
+                    "ALTER TABLE decision_traces ADD COLUMN is_llm_call INTEGER DEFAULT 1",
+                ]:
+                    try:
+                        await conn.exec_driver_sql(stmt)
+                    except Exception:
+                        pass
 
     async def upsert_workflow(self, row: dict) -> None:
         async with self.engine.begin() as conn:
